@@ -311,6 +311,18 @@ with st.expander("🔎 Discover / refresh listings"):
                 st.error(f"Discovery failed: {exc}")
 
 
+# First visit: load a small batch automatically so Home is not empty.
+# Users can fetch more from the discovery panel whenever they want.
+if "discovery" not in st.session_state:
+    try:
+        with st.spinner("Loading adult-game discoveries for your home page..."):
+            st.session_state["discovery"] = discover_games(max_pages=2)
+    except Exception as exc:
+        st.session_state["discovery"] = {
+            "itch_games": [], "f95_games": [], "f95_links": [],
+            "errors": [f"Automatic discovery failed: {exc}"]
+        }
+
 payload = st.session_state.get(
     "discovery",
     {"itch_games": [], "f95_games": [], "f95_links": [], "errors": []}

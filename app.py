@@ -104,6 +104,35 @@ def as_bool(value):
     return str(value).strip().lower() in ("true", "1", "yes")
 
 
+# Candidate visibility is deliberately conservative: a feed tag alone is not
+# enough. Text must contain an adult-content signal and no obvious age-risk term.
+RISK_TERMS = __import__("re").compile(
+    r"\\b(loli|lolita|shota|underage|under.?age|school.?girl|school.?boy|"
+    r"child|children|kid|minor|teen(?:age)?|young girl|young boy)\\b",
+    __import__("re").I
+)
+ADULT_TERMS = __import__("re").compile(
+    r"\\b(hentai|nsfw|adult|18\\+|erotic|explicit|sexual|uncensored|xxx|"
+    r"sex game|adult game|mature content)\\b",
+    __import__("re").I
+)
+
+
+def is_displayable_candidate(game):
+    text = " ".join(
+        safe_text(game.get(k), "")
+        for k in ("title", "genre", "description", "feed")
+    ).lower()
+    if RISK_TERMS.search(text):
+        return False
+    if as_bool(game.get("adult_verified")) and safe_text(game.get("listing_status")).lower() == "approved":
+        return True
+    # Manually entered catalogue records are still shown as unverified candidates.
+    if safe_text(game.get("source")).lower() == "steam" and ADULT_TERMS.search(text):
+        return True
+    return bool(ADULT_TERMS.search(text))
+
+
 def load_catalogue():
     if not CATALOGUE.exists():
         return pd.DataFrame()
@@ -130,12 +159,18 @@ def load_catalogue():
 def cover_card(game):
     title = safe_text(game.get("title"), "Untitled game")
     cover = safe_text(game.get("cover_url"), "")
+    if not cover:
+        import re
+        steam_match = re.search(r"/app/(\\d+)", safe_text(game.get("official_url"), ""))
+        if steam_match:
+            cover = f"https://cdn.akamai.steamstatic.com/steam/apps/{steam_match.group(1)}/header.jpg"
     source = safe_text(game.get("source"), "Unknown source")
     platform = safe_text(game.get("platform"), "Platform unknown")
     genre = safe_text(game.get("genre"), "Genre unknown")
-    status = safe_text(
-        game.get("listing_status"), "unverified"
-    ).title()
+    status = "Approved" if (
+        as_bool(game.get("adult_verified"))
+        and safe_text(game.get("listing_status")).lower() == "approved"
+    ) else "Unverified · candidate"
     description = safe_text(
         game.get("description"), "No description supplied."
     )
@@ -191,7 +226,7 @@ if not st.session_state.age_ok:
             visual novels, simulations and adventures.
         </p>
         <h3 style="color:#ff4db8">18+ ONLY</h3>
-        <p>Only manually reviewed listings with adult characters are shown. Unverified submissions stay hidden.</p>
+        <p>Adult-game discovery. Unverified listings are clearly labelled and may contain inaccurate metadata.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -251,7 +286,7 @@ if HERO.exists():
 # DISCOVERY
 with st.expander("🔎 Discover / refresh listings"):
     st.write(
-        "Fetches candidate listings from public feeds for review. Feed tags and keyword filters cannot prove every character is an adult, so fetched candidates are never shown in the public catalogue until manually reviewed and approved in catalogue.csv."
+        "Fetches adult-tagged feed candidates. Only entries with adult-content signals in their title/description are shown as unverified candidates; obvious age-risk terms are excluded. This is not a guarantee of character ages—review each game's official page before opening."
     )
 
     pages = st.slider(
@@ -270,7 +305,7 @@ with st.expander("🔎 Discover / refresh listings"):
                 st.success(
                     f"Fetched {len(payload['itch_games'])} itch.io and "
                     f"{len(payload.get('f95_games', []))} F95Zone candidates. "
-                    "They remain hidden until manually approved."
+                    "Adult-signal candidates will appear below with an Unverified label."
                 )
             except Exception as exc:
                 st.error(f"Discovery failed: {exc}")
@@ -396,8 +431,8 @@ for game in games:
         and safe_text(game.get("listing_status")).lower() == "approved"
     )
 
-    # Fail closed: never display feed discoveries or unreviewed catalogue rows.
-    if not verified:
+    # Display adult-signalled candidates with an explicit unverified label.
+    if not is_displayable_candidate(game):
         continue
 
     filtered.append(game)
@@ -429,8 +464,8 @@ if sort in sort_map:
 if page == "F95Zone":
     st.subheader("🔗 F95Zone — latest feed listings")
     st.info(
-        "Only manually reviewed, approved adult-only entries are shown here. "
-        "Unreviewed F95Zone feed results are hidden."
+        "Adult-signalled F95Zone candidates appear as unverified. "
+        "Text filters cannot guarantee character ages; check the source page."
     )
     f95_filtered = [g for g in filtered if safe_text(g.get("source")) == "F95Zone"]
     if f95_filtered:
@@ -439,7 +474,7 @@ if page == "F95Zone":
             with cols[i % 2]:
                 cover_card(game)
     else:
-        st.warning("No F95Zone game listings were returned by the feed. You can still browse F95Zone directly.")
+        st.warning("No F95Zone candidates passed the adult-content text filter. Try refreshing later.")
 elif page == "New Releases":
     st.subheader("🆕 New / recently discovered games")
     st.caption(
@@ -476,7 +511,7 @@ else:
 
 st.caption(
     f"{len(filtered)} listings shown · "
-    f"{len(discovered) + len(f95_games)} feed candidates fetched this session · hidden pending review"
+    f"{len(discovered) + len(f95_games)} raw feed candidates fetched · only adult-signalled candidates shown"
 )
 
 
@@ -488,9 +523,8 @@ if payload.get("errors"):
 
 if not filtered:
     st.info(
-        "No manually approved adult-only listings match these filters. "
-        "New feed discoveries stay hidden until each title and its character ages are reviewed. "
-        "A feed tag or automated keyword scan is not proof that all characters are adults."
+        "No candidates passed the adult-content text filter. Refresh discovery or broaden your search. "
+        "A listing tag or automated text scan cannot prove every character is an adult."
     )
 
 else:

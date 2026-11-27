@@ -2,8 +2,6 @@
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-from urllib.parse import quote_plus
-from html import escape
 from discover import discover_games
 
 st.set_page_config(
@@ -12,105 +10,80 @@ st.set_page_config(
     layout="wide"
 )
 
-HERO_IMAGE = Path("assets/hero.jpg")
-CATALOGUE = Path("catalogue.csv")
-
-
-# ---------- DESIGN ----------
+ROOT = Path(__file__).parent
+CATALOGUE = ROOT / "catalogue.csv"
+HERO = ROOT / "assets" / "hero.jpg"
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap');
-
 .stApp {
     background: #090710;
     color: #f8efff;
     font-family: Inter, sans-serif;
 }
-
-h1, h2, h3 {
-    color: white;
-    font-family: Orbitron, sans-serif;
-}
-
 [data-testid="stSidebar"] {
     background: #100b19;
     border-right: 1px solid #54204f;
 }
-
+h1,h2,h3 {
+    font-family: Orbitron, sans-serif;
+    color: #fff;
+}
+.hero {
+    padding: 26px;
+    border: 1px solid #a51c80;
+    border-radius: 20px;
+    background: linear-gradient(125deg,#1d1027,#100a19,#35102d);
+    box-shadow: 0 0 25px #8d126633;
+    margin-bottom: 18px;
+}
 .logo {
     font-family: Orbitron, sans-serif;
-    font-size: clamp(36px, 7vw, 64px);
+    font-size: clamp(36px,7vw,64px);
     font-weight: 900;
-    letter-spacing: -2px;
+    letter-spacing: -3px;
 }
-
 .logo span {
     color: #ff1493;
     text-shadow: 0 0 20px #ff1493;
 }
-
-.hero-box {
-    padding: 26px;
-    border: 1px solid #a51c80;
-    border-radius: 20px;
-    background: linear-gradient(125deg, #1d1027, #100a19, #35102d);
-    box-shadow: 0 0 25px #8d126633;
-    margin-bottom: 20px;
-}
-
-.hero-subtitle {
+.sub {
     color: #d9b6d8;
     letter-spacing: 4px;
     font-size: 12px;
 }
-
-.game-card {
+.card {
     background: #171020;
     border: 1px solid #54274f;
     border-radius: 14px;
     padding: 12px;
-    margin-bottom: 18px;
+    margin: 4px 0 18px;
 }
-
-.game-title {
-    color: white;
-    font-size: 17px;
-    font-weight: 700;
-    margin: 8px 0;
-}
-
-.game-meta {
+.meta {
     color: #c7a8ce;
     font-size: 12px;
 }
-
-.neon-line {
-    height: 1px;
-    background: linear-gradient(90deg, transparent, #ff1493, transparent);
-    margin: 25px 0;
+.tag {
+    display: inline-block;
+    padding: 4px 8px;
+    margin: 3px;
+    border: 1px solid #a51c80;
+    border-radius: 20px;
+    color: #ff83cf;
+    font-size: 11px;
 }
-
-.stButton > button,
-.stLinkButton > a {
-    background: linear-gradient(90deg, #d90c86, #8d27d8);
+.stButton>button,.stLinkButton>a {
+    background: linear-gradient(90deg,#d90c86,#8d27d8);
     color: white !important;
     border: 1px solid #ff55bd;
     border-radius: 10px;
     font-weight: 700;
     width: 100%;
 }
-
-.stButton > button:hover,
-.stLinkButton > a:hover {
-    box-shadow: 0 0 18px #ff1493;
-    border-color: white;
+hr {
+    border-color: #54204f;
 }
-
-div[data-testid="stImage"] img {
-    border-radius: 12px;
-}
-
 footer {
     visibility: hidden;
 }
@@ -118,372 +91,267 @@ footer {
 """, unsafe_allow_html=True)
 
 
-# ---------- DATA HELPERS ----------
+def safe_text(value, default="Not available"):
+    if value is None or pd.isna(value):
+        return default
+    value = str(value).strip()
+    if value.lower() in ("", "nan", "none"):
+        return default
+    return value
 
-def normalise(data):
-    data = data.copy()
 
-    aliases = {
-        "style": "art_style",
-        "link": "official_url",
-        "image_url": "cover_url"
-    }
+def as_bool(value):
+    return str(value).strip().lower() in ("true", "1", "yes")
 
-    for old, new in aliases.items():
-        if new not in data.columns and old in data.columns:
-            data[new] = data[old]
 
-    defaults = {
-        "game_id": "",
-        "title": "Untitled",
-        "platform": "Unknown",
-        "source": "Unknown",
-        "genre": "Unknown",
-        "art_style": "Unknown",
-        "rating": None,
-        "rating_count": None,
-        "views": None,
-        "downloads": None,
-        "trend_score": None,
-        "description": "",
-        "official_url": "",
-        "cover_url": "",
-        "adult_verified": False,
-        "listing_status": "pending_review",
-        "last_verified": ""
-    }
+def load_catalogue():
+    if not CATALOGUE.exists():
+        return pd.DataFrame()
 
-    for column, default in defaults.items():
-        if column not in data.columns:
-            data[column] = default
+    try:
+        data = pd.read_csv(CATALOGUE)
+    except Exception:
+        return pd.DataFrame()
 
-    for column in [
-        "rating", "rating_count", "views",
-        "downloads", "trend_score"
-    ]:
-        data[column] = pd.to_numeric(
-            data[column], errors="coerce"
-        )
+    columns = [
+        "title", "platform", "source", "genre", "art_style",
+        "rating", "description", "official_url", "cover_url",
+        "adult_verified", "listing_status", "views", "downloads",
+        "trend_score", "last_verified", "price_type"
+    ]
 
-    for column in [
-        "title", "platform", "source", "genre",
-        "art_style", "description", "official_url",
-        "cover_url", "listing_status", "last_verified"
-    ]:
-        data[column] = data[column].fillna(
-            defaults[column]
-        ).astype(str)
-
-    data["adult_verified"] = (
-        data["adult_verified"].astype(str).str.lower()
-        .isin(["true", "yes", "1"])
-    )
+    for col in columns:
+        if col not in data.columns:
+            data[col] = None
 
     return data
 
 
-def load_games():
-    frames = []
-
-    if CATALOGUE.exists():
-        try:
-            frames.append(normalise(pd.read_csv(CATALOGUE)))
-        except Exception as error:
-            st.error(f"Catalogue loading error: {error}")
-
-    if "discovered_games" in st.session_state:
-        frames.append(
-            normalise(
-                pd.DataFrame(st.session_state["discovered_games"])
-            )
-        )
-
-    if not frames:
-        return normalise(pd.DataFrame())
-
-    games = pd.concat(frames, ignore_index=True)
-
-    games["_unique"] = games["game_id"].where(
-        games["game_id"].astype(str).str.len() > 0,
-        games["official_url"]
+def cover_card(game):
+    title = safe_text(game.get("title"), "Untitled game")
+    cover = safe_text(game.get("cover_url"), "")
+    source = safe_text(game.get("source"), "Unknown source")
+    platform = safe_text(game.get("platform"), "Platform unknown")
+    genre = safe_text(game.get("genre"), "Genre unknown")
+    status = safe_text(
+        game.get("listing_status"), "unverified"
+    ).title()
+    description = safe_text(
+        game.get("description"), "No description supplied."
     )
+    url = safe_text(game.get("official_url"), "")
+    rating = game.get("rating")
 
-    games = games.drop_duplicates(
-        subset=["_unique"], keep="first"
-    ).drop(columns=["_unique"])
+    st.markdown('<div class="card">', unsafe_allow_html=True)
 
-    return games
+    if cover.startswith(("https://", "http://")):
+        st.image(cover, use_container_width=True)
+    else:
+        st.markdown("""
+        <div class="hero" style="text-align:center">
+            <div class="logo">AFTER<span>DARK</span></div>
+            <div class="sub">GAME COVER UNAVAILABLE</div>
+        </div>
+        """, unsafe_allow_html=True)
 
+    st.markdown(f"**{title}**")
+    st.markdown(
+        f"<div class='meta'>{platform} · {source} · {genre}</div>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<span class='tag'>{status}</span>",
+        unsafe_allow_html=True
+    )
+    st.caption(description[:190])
 
-# ---------- GAME CARDS ----------
+    if rating is not None and not pd.isna(rating):
+        st.write(f"⭐ {float(rating):.1f}")
+    else:
+        st.caption("⭐ Rating not supplied")
 
-def show_game_cards(data):
-    st.caption(f"{len(data)} games found")
+    if url.startswith(("https://", "http://")):
+        st.link_button("Open game / source ↗", url)
 
-    if data.empty:
-        st.info(
-            "No games found. Open the discovery panel and "
-            "press Scan for New Games."
-        )
-        return
-
-    for start in range(0, len(data), 2):
-        columns = st.columns(2)
-
-        for offset, column in enumerate(columns):
-            index = start + offset
-
-            if index >= len(data):
-                break
-
-            game = data.iloc[index]
-
-            with column:
-                st.markdown(
-                    '<div class="game-card">',
-                    unsafe_allow_html=True
-                )
-
-                cover = str(game["cover_url"]).strip()
-
-                if cover.startswith(("https://", "http://")):
-                    st.image(
-                        cover,
-                        use_container_width=True
-                    )
-                else:
-                    st.markdown("""
-                    <div style="
-                        height:180px;
-                        background:linear-gradient(135deg,#29132e,#10101a);
-                        border-radius:12px;
-                        display:flex;
-                        align-items:center;
-                        justify-content:center;
-                        color:#ff4db8;
-                        font-family:Orbitron;
-                        font-size:22px;">
-                        AFTERDARK
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                st.markdown(
-                    f'<div class="game-title">'
-                    f'{escape(str(game["title"]))}</div>',
-                    unsafe_allow_html=True
-                )
-
-                st.markdown(
-                    f'<div class="game-meta">'
-                    f'{escape(str(game["platform"]))} · '
-                    f'{escape(str(game["source"]))}</div>',
-                    unsafe_allow_html=True
-                )
-
-                st.caption(
-                    f'Genre: {game["genre"]} · '
-                    f'Art style: {game["art_style"]}'
-                )
-
-                if pd.notna(game["rating"]):
-                    st.write(f'⭐ {game["rating"]}/5')
-                else:
-                    st.caption("⭐ Rating unavailable")
-
-                if game["adult_verified"]:
-                    st.success("Adult suitability verified")
-                else:
-                    st.warning(
-                        "Unverified candidate · Check content first"
-                    )
-
-                st.write(str(game["description"])[:180])
-
-                official = str(game["official_url"]).strip()
-
-                if official.startswith(("https://", "http://")):
-                    st.link_button("View Game ↗", official)
-
-                f95_link = (
-                    "https://f95zone.to/search/?q="
-                    + quote_plus(str(game["title"]))
-                )
-
-                st.link_button("Search on F95Zone ↗", f95_link)
-
-                st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ---------- AGE VERIFICATION ----------
+# AGE GATE
+if "age_ok" not in st.session_state:
+    st.session_state.age_ok = False
 
-if "age_confirmed" not in st.session_state:
-    st.session_state.age_confirmed = False
-
-if not st.session_state.age_confirmed:
+if not st.session_state.age_ok:
     st.markdown("""
-    <div class="hero-box">
+    <div class="hero">
         <div class="logo">AFTER<span>DARK</span> 🌙</div>
-        <div class="hero-subtitle">ADULT GAME DISCOVERY</div>
+        <div class="sub">ADULT GAME DISCOVERY</div>
         <h2>ENTER THE AFTERDARK</h2>
-        <p>Discover indie games, visual novels, simulations and adventures.</p>
+        <p>
+            Discover adult-oriented indie games,
+            visual novels, simulations and adventures.
+        </p>
         <h3 style="color:#ff4db8">18+ ONLY</h3>
-        <p>This platform is intended for adults aged 18 or older.</p>
+        <p>Listings are unverified until reviewed.</p>
     </div>
     """, unsafe_allow_html=True)
 
-    if HERO_IMAGE.exists():
-        st.image(str(HERO_IMAGE), use_container_width=True)
-    else:
-        st.warning(
-            "Hero image missing. Upload your image as "
-            "assets/hero.jpg in GitHub."
-        )
+    if HERO.exists():
+        st.image(str(HERO), use_container_width=True)
 
-    st.warning("Adults only. Confirm that you are 18 or older.")
+    st.warning("Adults only. Continue only if you are 18 or older.")
 
     if st.button("🌙 I AM 18+ | ENTER AFTERDARK"):
-        st.session_state.age_confirmed = True
+        st.session_state.age_ok = True
         st.rerun()
 
     st.stop()
 
 
-# ---------- SIDEBAR ----------
-
+# SIDEBAR
 with st.sidebar:
     st.markdown(
-        '<div class="logo" style="font-size:27px">'
-        'AFTER<span>DARK</span></div>',
+        "<div class='logo' style='font-size:27px'>AFTER<span>DARK</span></div>",
         unsafe_allow_html=True
     )
 
-    st.caption("ADULT GAME DISCOVERY")
-
     page = st.radio(
-        "Navigation",
+        "Navigate",
         [
             "Home",
             "All Games",
             "Trending",
-            "Highest Rated",
-            "Most Viewed",
-            "Most Downloaded",
-            "Discover"
+            "Top Rated",
+            "New Releases",
+            "F95Zone"
         ]
     )
 
-    st.divider()
-    st.caption("AFTERDARK · 18+")
+    st.caption("18+ · External listings are not endorsements")
 
 
-# ---------- MAIN HERO ----------
-
+# MAIN HERO
 st.markdown("""
-<div class="hero-box">
+<div class="hero">
     <div class="logo">AFTER<span>DARK</span> 🌙</div>
-    <div class="hero-subtitle">DISCOVER BEYOND THE ORDINARY</div>
+    <div class="sub">DISCOVER BEYOND THE ORDINARY</div>
     <p>
-        Your destination for adult-oriented indie games,
-        visual novels, simulations and adventures.
+        One discovery hub for itch.io indie games
+        and F95Zone game links.
     </p>
-    <h4 style="color:#ff4db8">
+    <b style="color:#ff4db8">
         ✦ PC &nbsp; ✦ ANDROID &nbsp; ✦ BROWSER
-    </h4>
+    </b>
 </div>
 """, unsafe_allow_html=True)
 
-if HERO_IMAGE.exists():
-    st.image(str(HERO_IMAGE), use_container_width=True)
+if HERO.exists():
+    st.image(str(HERO), use_container_width=True)
 
 
-# ---------- DISCOVERY ----------
-
-with st.expander("🔎 Discover new games · itch.io + Steam"):
-
+# DISCOVERY
+with st.expander("🔎 Discover / refresh listings"):
     st.write(
-        "Search public discovery feeds and Steam search results. "
-        "New entries are candidates, not verified adult-game listings."
+        "Fetches public itch.io RSS browse feeds. "
+        "F95Zone is link-only and opens its own search pages."
     )
 
-    if st.button("🚀 Scan for New Games"):
-        with st.spinner("Searching itch.io and Steam..."):
+    pages = st.slider(
+        "itch.io pages per feed",
+        min_value=1,
+        max_value=10,
+        value=4
+    )
+
+    if st.button("Explore itch.io + F95Zone", type="primary"):
+        with st.spinner("Fetching public listings..."):
             try:
-                found = discover_games()
-                st.session_state["discovered_games"] = found
-                st.success(f"Found {len(found)} candidates.")
-                st.rerun()
-            except Exception as error:
-                st.error(f"Discovery failed: {error}")
+                payload = discover_games(max_pages=pages)
+                st.session_state["discovery"] = payload
 
-if "discovered_games" in st.session_state:
-    found = st.session_state["discovered_games"]
-
-    st.success(f"{len(found)} discovery candidates loaded.")
-
-    if found:
-        st.download_button(
-            "Download discovery CSV",
-            data=pd.DataFrame(found).to_csv(
-                index=False
-            ).encode("utf-8"),
-            file_name="afterdark_discovery.csv",
-            mime="text/csv"
-        )
+                st.success(
+                    f"Loaded {len(payload['itch_games'])} "
+                    f"itch.io listings and "
+                    f"{len(payload['f95_links'])} F95Zone links."
+                )
+            except Exception as exc:
+                st.error(f"Discovery failed: {exc}")
 
 
-# ---------- LOAD CATALOGUE + DISCOVERED GAMES ----------
-
-games = load_games()
-
-
-# ---------- FILTERS ----------
-
-st.markdown(
-    '<div class="neon-line"></div>',
-    unsafe_allow_html=True
+payload = st.session_state.get(
+    "discovery",
+    {"itch_games": [], "f95_links": [], "errors": []}
 )
 
-st.subheader("Find your next game")
+discovered = payload.get("itch_games", [])
+f95_links = payload.get("f95_links", [])
+
+catalogue = load_catalogue()
+
+rows = []
+
+if not catalogue.empty:
+    rows.extend(catalogue.to_dict("records"))
+
+rows.extend(discovered)
+
+
+# REMOVE DUPLICATES
+unique = {}
+
+for game in rows:
+    key = (
+        safe_text(game.get("official_url"), "")
+        or safe_text(game.get("game_id"), "")
+    )
+
+    if key:
+        unique[key] = game
+
+games = list(unique.values())
+
+
+# SEARCH AND FILTERS
+st.markdown("---")
 
 search = st.text_input(
     "🔍 Search games",
-    placeholder="Search title, genre or description..."
+    placeholder="Search by title, source, genre..."
 )
 
-col1, col2 = st.columns(2)
+c1, c2, c3 = st.columns(3)
 
-with col1:
-    platforms = ["All"] + sorted(
-        games["platform"].unique().tolist()
+with c1:
+    platforms = ["All"] + sorted({
+        safe_text(g.get("platform"))
+        for g in games
+        if safe_text(g.get("platform")) != "Not available"
+    })
+
+    platform = st.selectbox("Platform", platforms)
+
+with c2:
+    source = st.selectbox(
+        "Source",
+        ["All", "itch.io", "F95Zone"]
     )
-    selected_platform = st.selectbox("Platform", platforms)
 
-with col2:
-    sources = ["All"] + sorted(
-        games["source"].unique().tolist()
-    )
-    selected_source = st.selectbox("Source", sources)
+with c3:
+    genres = ["All"] + sorted({
+        safe_text(g.get("genre"))
+        for g in games
+        if safe_text(g.get("genre"))
+        not in ("Not available", "Unknown")
+    })
 
-col3, col4 = st.columns(2)
+    genre = st.selectbox("Genre", genres)
 
-with col3:
-    genres = ["All"] + sorted(
-        games["genre"].unique().tolist()
-    )
-    selected_genre = st.selectbox("Genre", genres)
-
-with col4:
-    styles = ["All"] + sorted(
-        games["art_style"].unique().tolist()
-    )
-    selected_style = st.selectbox("Art style", styles)
 
 verification = st.selectbox(
     "Verification",
-    ["All games", "Verified only", "Unverified only"]
+    ["All listings", "Verified only", "Unverified only"]
 )
 
-sorting = st.selectbox(
+sort = st.selectbox(
     "Rank games by",
     [
         "Latest",
@@ -495,50 +363,38 @@ sorting = st.selectbox(
 )
 
 
-# ---------- APPLY FILTERS ----------
+filtered = []
 
-results = games.copy()
+for game in games:
+    searchable = " ".join(
+        safe_text(game.get(key), "")
+        for key in ("title", "genre", "source", "description")
+    ).lower()
 
-if search:
-    searchable = (
-        results["title"] + " " +
-        results["genre"] + " " +
-        results["description"]
+    if search and search.lower() not in searchable:
+        continue
+
+    if platform != "All" and safe_text(game.get("platform")) != platform:
+        continue
+
+    if source != "All" and safe_text(game.get("source")) != source:
+        continue
+
+    if genre != "All" and safe_text(game.get("genre")) != genre:
+        continue
+
+    verified = (
+        as_bool(game.get("adult_verified"))
+        and safe_text(game.get("listing_status")).lower() == "approved"
     )
 
-    results = results[
-        searchable.str.contains(
-            search, case=False, na=False
-        )
-    ]
+    if verification == "Verified only" and not verified:
+        continue
 
-if selected_platform != "All":
-    results = results[
-        results["platform"].str.contains(
-            selected_platform, case=False, na=False
-        )
-    ]
+    if verification == "Unverified only" and verified:
+        continue
 
-if selected_source != "All":
-    results = results[
-        results["source"] == selected_source
-    ]
-
-if selected_genre != "All":
-    results = results[
-        results["genre"] == selected_genre
-    ]
-
-if selected_style != "All":
-    results = results[
-        results["art_style"] == selected_style
-    ]
-
-if verification == "Verified only":
-    results = results[results["adult_verified"]]
-
-elif verification == "Unverified only":
-    results = results[~results["adult_verified"]]
+    filtered.append(game)
 
 
 sort_map = {
@@ -548,58 +404,113 @@ sort_map = {
     "Trending": "trend_score"
 }
 
-if sorting in sort_map:
-    results = results.sort_values(
-        sort_map[sorting],
-        ascending=False,
-        na_position="last"
-    )
+if sort in sort_map:
+    field = sort_map[sort]
 
-if page == "Trending":
-    results = results.sort_values(
-        "trend_score", ascending=False, na_position="last"
-    )
+    def sort_value(game):
+        value = pd.to_numeric(
+            game.get(field), errors="coerce"
+        )
+        return value if pd.notna(value) else -1
 
-elif page == "Highest Rated":
-    results = results.sort_values(
-        "rating", ascending=False, na_position="last"
-    )
-
-elif page == "Most Viewed":
-    results = results.sort_values(
-        "views", ascending=False, na_position="last"
-    )
-
-elif page == "Most Downloaded":
-    results = results.sort_values(
-        "downloads", ascending=False, na_position="last"
+    filtered.sort(
+        key=sort_value,
+        reverse=True
     )
 
 
-# ---------- DISPLAY ----------
+# PAGE CONTENT
+if page == "F95Zone":
+    st.subheader("🔗 F95Zone — external links")
 
-if page == "Home":
-    st.subheader("🔥 Featured Games")
+    st.info(
+        "F95Zone is configured as links-only. "
+        "These open F95Zone's own search pages; "
+        "individual thread titles and covers are not imported."
+    )
 
-elif page == "Discover":
-    st.subheader("🌐 Discovery Catalogue")
+    cols = st.columns(2)
+
+    for i, item in enumerate(f95_links):
+        with cols[i % 2]:
+            st.markdown(f"**{item['title']}**")
+            st.caption(item["description"])
+            st.link_button(
+                "Open on F95Zone ↗",
+                item["official_url"]
+            )
+
+elif page == "New Releases":
+    st.subheader("🆕 New / recently discovered games")
+    st.caption(
+        "The itch.io feed provides recent uploads; "
+        "catalogue rows may have older dates."
+    )
+
+    recent = [
+        g for g in filtered
+        if safe_text(g.get("source")) == "itch.io"
+    ]
+
+    if recent:
+        filtered = recent
+
+elif page == "Trending":
+    st.subheader("🔥 Trending")
+    st.caption(
+        "Only source-provided trend values can be ranked."
+    )
+
+elif page == "Top Rated":
+    st.subheader("⭐ Top rated")
+    st.caption(
+        "Games without published ratings are not assigned invented scores."
+    )
 
 else:
-    st.subheader(f"🌙 {page}")
+    st.subheader(
+        "🔥 Featured Games" if page == "Home"
+        else "🎮 All Games"
+    )
 
-show_game_cards(results)
 
-
-# ---------- FOOTER ----------
-
-st.markdown(
-    '<div class="neon-line"></div>',
-    unsafe_allow_html=True
+st.caption(
+    f"{len(filtered)} listings shown · "
+    f"{len(discovered)} itch.io discoveries loaded this session"
 )
+
+
+if payload.get("errors"):
+    with st.expander("Feed notes"):
+        for error in payload["errors"][:12]:
+            st.caption(error)
+
+
+if not filtered:
+    st.info(
+        "No listings match these filters. "
+        "Open the discovery panel and fetch listings, "
+        "or broaden your filters."
+    )
+
+else:
+    columns = st.columns(2)
+
+    for index, game in enumerate(filtered[:300]):
+        with columns[index % 2]:
+            cover_card(game)
+
+    if len(filtered) > 300:
+        st.caption(
+            "Showing first 300 matches. Narrow your search to see more."
+        )
+
+
+st.markdown("---")
 
 st.markdown(
     "<center style='color:#a98ba9'>"
-    "AFTERDARK 🌙 · Adult Game Discovery · 18+"
+    "AFTERDARK 🌙 · Adult game discovery · 18+"
     "</center>",
     unsafe_allow_html=True
 )

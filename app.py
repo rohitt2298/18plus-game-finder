@@ -3,6 +3,7 @@
 
 import streamlit as st
 import pandas as pd
+from discover import discover_itch_games
 from pathlib import Path
 
 st.set_page_config(

@@ -104,33 +104,22 @@ def as_bool(value):
     return str(value).strip().lower() in ("true", "1", "yes")
 
 
-# Candidate visibility is deliberately conservative: a feed tag alone is not
-# enough. Text must contain an adult-content signal and no obvious age-risk term.
-RISK_TERMS = __import__("re").compile(
-    r"\\b(loli|lolita|shota|underage|under.?age|school.?girl|school.?boy|"
-    r"child|children|kid|minor|teen(?:age)?|young girl|young boy)\\b",
-    __import__("re").I
-)
-ADULT_TERMS = __import__("re").compile(
-    r"\\b(hentai|adult|18\\+|erotic|explicit|sexual|uncensored|xxx|"
-    r"sex game|adult game|mature content)\\b",
-    __import__("re").I
-)
+# Exclude obvious age-risk terms, but show other listings from the adult-tagged
+# discovery feeds as Unverified candidates. This is not age verification.
+import re
 
+RISK_TERMS = re.compile(
+    r"\b(loli|lolita|shota|underage|under.?age|school.?girl|school.?boy|"
+    r"child|children|kid|minor|teen(?:age)?|young girl|young boy)\b",
+    re.I
+)
 
 def is_displayable_candidate(game):
     text = " ".join(
         safe_text(game.get(k), "")
         for k in ("title", "genre", "description")
     ).lower()
-    if RISK_TERMS.search(text):
-        return False
-    if as_bool(game.get("adult_verified")) and safe_text(game.get("listing_status")).lower() == "approved":
-        return True
-    # Manually entered catalogue records are still shown as unverified candidates.
-    if safe_text(game.get("source")).lower() == "steam" and ADULT_TERMS.search(text):
-        return True
-    return bool(ADULT_TERMS.search(text))
+    return not bool(RISK_TERMS.search(text))
 
 
 def load_catalogue():
@@ -161,7 +150,7 @@ def cover_card(game):
     cover = safe_text(game.get("cover_url"), "")
     if not cover:
         import re
-        steam_match = re.search(r"/app/(\\d+)", safe_text(game.get("official_url"), ""))
+        steam_match = re.search(r"/app/(\d+)", safe_text(game.get("official_url"), ""))
         if steam_match:
             cover = f"https://cdn.akamai.steamstatic.com/steam/apps/{steam_match.group(1)}/header.jpg"
     source = safe_text(game.get("source"), "Unknown source")
@@ -401,10 +390,10 @@ art_styles = ["All"] + sorted({
 art_style = st.selectbox("Art style", art_styles)
 
 
-st.caption("Safety filter: only entries marked adult_verified=true AND listing_status=approved in catalogue.csv are displayed.")
+st.caption("Unapproved feed listings are shown as Unverified. Obvious age-risk terms are filtered, but text checks cannot confirm character ages or inspect artwork.")
 
 sort = st.selectbox(
-    "Rank approved games by",
+    "Rank games by",
     [
         "Latest",
         "Highest Rated",
@@ -535,7 +524,7 @@ if payload.get("errors"):
 
 if not filtered:
     st.info(
-        "No candidates passed the adult-content text filter. Refresh discovery or broaden your search. "
+        "No games are currently available in this session. Use Discover / refresh listings to fetch more. "
         "A listing tag or automated text scan cannot prove every character is an adult."
     )
 

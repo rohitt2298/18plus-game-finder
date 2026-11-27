@@ -251,8 +251,8 @@ if HERO.exists():
 # DISCOVERY
 with st.expander("🔎 Discover / refresh listings"):
     st.write(
-        "Fetches public itch.io RSS browse feeds. "
-        "F95Zone is link-only and opens its own search pages."
+        "Fetches public adult-tagged itch.io RSS feeds and attempts the latest F95Zone games RSS feed. "
+        "Feed coverage is partial; listings remain unverified until reviewed."
     )
 
     pages = st.slider(
@@ -269,9 +269,8 @@ with st.expander("🔎 Discover / refresh listings"):
                 st.session_state["discovery"] = payload
 
                 st.success(
-                    f"Loaded {len(payload['itch_games'])} "
-                    f"itch.io listings and "
-                    f"{len(payload['f95_links'])} F95Zone links."
+                    f"Loaded {len(payload['itch_games'])} itch.io listings and "
+                    f"{len(payload.get('f95_games', []))} F95Zone game listings."
                 )
             except Exception as exc:
                 st.error(f"Discovery failed: {exc}")
@@ -279,10 +278,11 @@ with st.expander("🔎 Discover / refresh listings"):
 
 payload = st.session_state.get(
     "discovery",
-    {"itch_games": [], "f95_links": [], "errors": []}
+    {"itch_games": [], "f95_games": [], "f95_links": [], "errors": []}
 )
 
 discovered = payload.get("itch_games", [])
+f95_games = payload.get("f95_games", [])
 f95_links = payload.get("f95_links", [])
 
 catalogue = load_catalogue()
@@ -293,6 +293,7 @@ if not catalogue.empty:
     rows.extend(catalogue.to_dict("records"))
 
 rows.extend(discovered)
+rows.extend(f95_games)
 
 
 # REMOVE DUPLICATES
@@ -345,6 +346,13 @@ with c3:
 
     genre = st.selectbox("Genre", genres)
 
+art_styles = ["All"] + sorted({
+    safe_text(g.get("art_style"))
+    for g in games
+    if safe_text(g.get("art_style")) not in ("Not available", "Unknown")
+})
+art_style = st.selectbox("Art style", art_styles)
+
 
 verification = st.selectbox(
     "Verification",
@@ -381,6 +389,9 @@ for game in games:
         continue
 
     if genre != "All" and safe_text(game.get("genre")) != genre:
+        continue
+
+    if art_style != "All" and safe_text(game.get("art_style")) != art_style:
         continue
 
     verified = (
@@ -421,24 +432,26 @@ if sort in sort_map:
 
 # PAGE CONTENT
 if page == "F95Zone":
-    st.subheader("🔗 F95Zone — external links")
-
+    st.subheader("🔗 F95Zone — latest feed listings")
     st.info(
-        "F95Zone is configured as links-only. "
-        "These open F95Zone's own search pages; "
-        "individual thread titles and covers are not imported."
+        "These titles are imported from a public RSS endpoint when available. "
+        "Coverage may be incomplete; listings are unverified and hosted by F95Zone."
     )
-
-    cols = st.columns(2)
-
-    for i, item in enumerate(f95_links):
-        with cols[i % 2]:
-            st.markdown(f"**{item['title']}**")
-            st.caption(item["description"])
-            st.link_button(
-                "Open on F95Zone ↗",
-                item["official_url"]
-            )
+    f95_filtered = [g for g in filtered if safe_text(g.get("source")) == "F95Zone"]
+    if f95_filtered:
+        cols = st.columns(2)
+        for i, game in enumerate(f95_filtered[:300]):
+            with cols[i % 2]:
+                cover_card(game)
+    else:
+        st.warning("No F95Zone game listings were returned by the feed. You can still browse F95Zone directly.")
+    with st.expander("F95Zone search links"):
+        cols = st.columns(2)
+        for i, item in enumerate(f95_links):
+            with cols[i % 2]:
+                st.markdown(f"**{item['title']}**")
+                st.caption(item["description"])
+                st.link_button("Open on F95Zone ↗", item["official_url"])
 
 elif page == "New Releases":
     st.subheader("🆕 New / recently discovered games")

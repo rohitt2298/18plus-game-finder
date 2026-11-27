@@ -29,7 +29,7 @@ st.markdown("""
 }
 
 h1, h2, h3 {
-    color: #fff;
+    color: white;
     font-family: Orbitron, sans-serif;
 }
 
@@ -118,7 +118,7 @@ footer {
 """, unsafe_allow_html=True)
 
 
-# ---------- HELPERS ----------
+# ---------- DATA HELPERS ----------
 
 def normalise(data):
     data = data.copy()
@@ -193,9 +193,9 @@ def load_games():
 
     if "discovered_games" in st.session_state:
         frames.append(
-            normalise(pd.DataFrame(
-                st.session_state["discovered_games"]
-            ))
+            normalise(
+                pd.DataFrame(st.session_state["discovered_games"])
+            )
         )
 
     if not frames:
@@ -215,13 +215,15 @@ def load_games():
     return games
 
 
+# ---------- GAME CARDS ----------
+
 def show_game_cards(data):
     st.caption(f"{len(data)} games found")
 
     if data.empty:
         st.info(
-            "No games found. Use the discovery scanner above "
-            "to find new candidates."
+            "No games found. Open the discovery panel and "
+            "press Scan for New Games."
         )
         return
 
@@ -245,7 +247,10 @@ def show_game_cards(data):
                 cover = str(game["cover_url"]).strip()
 
                 if cover.startswith(("https://", "http://")):
-                    st.image(cover, use_container_width=True)
+                    st.image(
+                        cover,
+                        use_container_width=True
+                    )
                 else:
                     st.markdown("""
                     <div style="
@@ -289,11 +294,10 @@ def show_game_cards(data):
                     st.success("Adult suitability verified")
                 else:
                     st.warning(
-                        "Unverified candidate · Check content before listing"
+                        "Unverified candidate · Check content first"
                     )
 
-                description = str(game["description"])
-                st.write(description[:180])
+                st.write(str(game["description"])[:180])
 
                 official = str(game["official_url"]).strip()
 
@@ -335,6 +339,8 @@ if not st.session_state.age_confirmed:
             "assets/hero.jpg in GitHub."
         )
 
+    st.warning("Adults only. Confirm that you are 18 or older.")
+
     if st.button("🌙 I AM 18+ | ENTER AFTERDARK"):
         st.session_state.age_confirmed = True
         st.rerun()
@@ -370,7 +376,7 @@ with st.sidebar:
     st.caption("AFTERDARK · 18+")
 
 
-# ---------- HERO ----------
+# ---------- MAIN HERO ----------
 
 st.markdown("""
 <div class="hero-box">
@@ -395,7 +401,7 @@ if HERO_IMAGE.exists():
 with st.expander("🔎 Discover new games · itch.io + Steam"):
 
     st.write(
-        "Scan public discovery feeds and Steam search results. "
+        "Search public discovery feeds and Steam search results. "
         "New entries are candidates, not verified adult-game listings."
     )
 
@@ -425,7 +431,7 @@ if "discovered_games" in st.session_state:
         )
 
 
-# ---------- LOAD GAMES ----------
+# ---------- LOAD CATALOGUE + DISCOVERED GAMES ----------
 
 games = load_games()
 
@@ -489,19 +495,19 @@ sorting = st.selectbox(
 )
 
 
-# ---------- FILTER RESULTS ----------
+# ---------- APPLY FILTERS ----------
 
 results = games.copy()
 
 if search:
-    text_to_search = (
+    searchable = (
         results["title"] + " " +
         results["genre"] + " " +
         results["description"]
     )
 
     results = results[
-        text_to_search.str.contains(
+        searchable.str.contains(
             search, case=False, na=False
         )
     ]
@@ -597,13 +603,3 @@ st.markdown(
     "</center>",
     unsafe_allow_html=True
 )
-
-
-
-
-
-
-
-                
-    
-                        

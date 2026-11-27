@@ -1,5 +1,4 @@
 
-
 import re
 import requests
 import xml.etree.ElementTree as ET
@@ -27,8 +26,8 @@ STEAM_SEARCHES = [
     "uncensored visual novel",
 ]
 
-PAGES_PER_FEED = 5
 TIMEOUT = 20
+PAGES_PER_FEED = 5
 
 
 def clean(value):
@@ -37,7 +36,7 @@ def clean(value):
     return re.sub(r"\s+", " ", value).strip()
 
 
-def get_text(item, *names):
+def item_text(item, *names):
     for name in names:
         node = item.find(name)
         if node is not None and node.text:
@@ -45,7 +44,7 @@ def get_text(item, *names):
     return ""
 
 
-def get_itch_platform(item):
+def itch_platform(item):
     platforms = []
     node = item.find("platforms")
 
@@ -82,11 +81,10 @@ def discover_itch_games(session):
                 root = ET.fromstring(response.content)
 
                 for item in root.findall(".//item"):
-                    title = get_text(
+                    title = item_text(
                         item, "plainTitle", "title"
                     )
-
-                    link = get_text(item, "link", "guid")
+                    link = item_text(item, "link", "guid")
 
                     host = urlparse(link).hostname or ""
 
@@ -101,20 +99,18 @@ def discover_itch_games(session):
 
                     seen.add(link)
 
-                    image = get_text(
+                    cover = item_text(
                         item, "imageurl", "imageUrl"
                     )
-
-                    description = get_text(
+                    description = item_text(
                         item, "description"
                     )
-
-                    price = get_text(item, "price")
+                    price = item_text(item, "price")
 
                     results.append({
                         "game_id": link,
                         "title": title,
-                        "platform": get_itch_platform(item),
+                        "platform": itch_platform(item),
                         "source": "itch.io",
                         "genre": "Unknown",
                         "art_style": "Unknown",
@@ -132,13 +128,15 @@ def discover_itch_games(session):
                         "last_verified": "",
                         "description": description[:500],
                         "official_url": link,
-                        "cover_url": image,
+                        "cover_url": cover,
                         "adult_verified": False,
                         "listing_status": "pending_review"
                     })
 
             except Exception as error:
-                errors.append(f"itch.io page error: {error}")
+                errors.append(
+                    f"itch.io feed error: {error}"
+                )
 
     return results, errors
 
@@ -171,12 +169,9 @@ def discover_steam_games(session):
 
                 seen.add(app_id)
 
-                title = clean(item.get("name", ""))
-                cover = item.get("tiny_image", "")
-
                 results.append({
                     "game_id": f"steam-{app_id}",
-                    "title": title,
+                    "title": clean(item.get("name", "")),
                     "platform": "PC",
                     "source": "Steam",
                     "genre": "Unknown",
@@ -196,13 +191,15 @@ def discover_steam_games(session):
                     "official_url": (
                         f"https://store.steampowered.com/app/{app_id}/"
                     ),
-                    "cover_url": cover,
+                    "cover_url": item.get("tiny_image", ""),
                     "adult_verified": False,
                     "listing_status": "pending_review"
                 })
 
         except Exception as error:
-            errors.append(f"Steam search '{query}' failed: {error}")
+            errors.append(
+                f"Steam search '{query}' failed: {error}"
+            )
 
     return results, errors
 
@@ -213,12 +210,11 @@ def discover_games():
         "User-Agent": "AFTERDARK-GameDiscovery/1.0"
     })
 
-    itch_results, itch_errors = discover_itch_games(session)
-    steam_results, steam_errors = discover_steam_games(session)
+    itch_games, itch_errors = discover_itch_games(session)
+    steam_games, steam_errors = discover_steam_games(session)
 
-    combined = itch_results + steam_results
+    combined = itch_games + steam_games
 
-    # Remove duplicate URLs
     unique = []
     seen = set()
 
@@ -231,14 +227,12 @@ def discover_games():
 
     if not unique and itch_errors and steam_errors:
         raise RuntimeError(
-            "Both discovery sources failed. "
+            "Both sources failed: "
             + " | ".join((itch_errors + steam_errors)[:4])
         )
 
     return unique
 
 
-
-                    
-
+    
                             

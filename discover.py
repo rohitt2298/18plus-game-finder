@@ -1,229 +1,217 @@
 
 import re
+import time
 import requests
 import xml.etree.ElementTree as ET
 from html import unescape
 from urllib.parse import urlparse, quote_plus
 
 ITCH_FEEDS = [
-    "https://itch.io/feed/new.xml",
-    "https://itch.io/games/newest.xml",
-    "https://itch.io/games/tag-visual-novel.xml",
-    "https://itch.io/games/tag-dating-sim.xml",
-    "https://itch.io/games/tag-simulation.xml",
-    "https://itch.io/games/tag-nsfw.xml",
+    ("Newest", "https://itch.io/games/newest.xml"),
+    ("Top rated", "https://itch.io/games/top-rated.xml"),
+    ("Top sellers", "https://itch.io/games/top-sellers.xml"),
+    ("NSFW", "https://itch.io/games/tag-nsfw.xml"),
+    ("Visual novels", "https://itch.io/games/tag-visual-novel.xml"),
+    ("Dating sims", "https://itch.io/games/tag-dating-sim.xml"),
+    ("Simulation", "https://itch.io/games/tag-simulation.xml"),
+    ("Adult", "https://itch.io/games/tag-adult.xml"),
 ]
 
-STEAM_SEARCHES = [
-    "adult visual novel",
-    "mature visual novel",
-    "dating simulator",
-    "romance visual novel",
-    "NSFW game",
-    "adult simulation",
-    "eroge",
-]
-
-HEADERS = {
-    "User-Agent": "AFTERDARK-GameDiscovery/1.0"
-}
+MAX_PAGES_PER_FEED = 4
+REQUEST_TIMEOUT = 18
+USER_AGENT = "AFTERDARK-GameDiscovery/1.0"
 
 
-def clean_text(value):
+def clean(value):
     value = unescape(value or "")
-    value = re.sub(r"<[^>]*>", " ", value)
+    value = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
 
-def discover_itch_games(session):
-    games = []
-    errors = []
+def _platforms(item):
+    found = []
+    node = item.find("platforms")
 
-    for feed in ITCH_FEEDS:
-        try:
-            response = session.get(feed, timeout=20)
-            response.raise_for_status()
+    if node is not None:
+        for child in list(node):
+            if (child.text or "").strip().lower() == "yes":
+                tag = child.tag.lower()
 
-            root = ET.fromstring(response.content)
+                if tag == "html":
+                    found.append("Browser")
+                elif tag == "android":
+                    found.append("Android")
+                elif tag in ("windows", "linux", "osx"):
+                    found.append("PC")
 
-            for item in root.findall(".//item"):
-                title = clean_text(
-                    item.findtext("plainTitle")
-                    or item.findtext("title")
-                )
-
-                link = (
-                    item.findtext("link")
-                    or item.findtext("guid")
-                    or ""
-                ).strip()
-
-                host = urlparse(link).hostname or ""
-
-                if not title:
-                    continue
-
-                if not (
-                    host == "itch.io"
-                    or host.endswith(".itch.io")
-                ):
-                    continue
-
-                description = clean_text(
-                    item.findtext("description")
-                )
-
-                image = (
-                    item.findtext("imageurl") or ""
-                ).strip()
-
-                price = (
-                    item.findtext("price") or ""
-                ).strip()
-
-                platform_node = item.find("platforms")
-                platforms = []
-
-                if platform_node is not None:
-                    for platform in platform_node:
-                        if (platform.text or "").strip().lower() == "yes":
-                            name = platform.tag.lower()
-
-                            if name == "html":
-                                platforms.append("Browser")
-                            elif name == "android":
-                                platforms.append("Android")
-                            elif name in ("windows", "linux", "osx"):
-                                platforms.append("PC")
-
-                games.append({
-                    "game_id": link,
-                    "title": title,
-                    "platform": " / ".join(sorted(set(platforms))) or "Unknown",
-                    "source": "itch.io",
-                    "genre": "Unknown",
-                    "art_style": "Unknown",
-                    "price_type": (
-                        "Free" if price in ("$0.00", "0.00")
-                        else "Paid / Other" if price
-                        else "Unknown"
-                    ),
-                    "rating": None,
-                    "rating_count": None,
-                    "views": None,
-                    "downloads": None,
-                    "trend_score": None,
-                    "stats_source": "Not publicly available",
-                    "last_verified": "",
-                    "description": description[:500],
-                    "official_url": link,
-                    "cover_url": image,
-                    "adult_verified": False,
-                    "listing_status": "pending_review",
-                    "f95_search_url": (
-                        "https://f95zone.to/search/?q="
-                        + quote_plus(title)
-                    )
-                })
-
-        except Exception as error:
-            errors.append(f"itch.io: {error}")
-
-    return games, errors
+    return " / ".join(sorted(set(found))) if found else "Unknown"
 
 
-def discover_steam_games(session):
-    games = []
-    errors = []
-    seen = set()
-
-    for term in STEAM_SEARCHES:
-        try:
-            response = session.get(
-                "https://store.steampowered.com/api/storesearch/",
-                params={
-                    "term": term,
-                    "l": "english",
-                    "cc": "us"
-                },
-                timeout=20
-            )
-
-            response.raise_for_status()
-            data = response.json()
-
-            for item in data.get("items", []):
-                title = clean_text(item.get("name", ""))
-                app_id = item.get("id")
-
-                if not title or not app_id or app_id in seen:
-                    continue
-
-                seen.add(app_id)
-
-                image = item.get("tiny_image", "")
-
-                games.append({
-                    "game_id": f"steam-{app_id}",
-                    "title": title,
-                    "platform": "PC",
-                    "source": "Steam",
-                    "genre": "Unknown",
-                    "art_style": "Unknown",
-                    "price_type": "Unknown",
-                    "rating": None,
-                    "rating_count": None,
-                    "views": None,
-                    "downloads": None,
-                    "trend_score": None,
-                    "stats_source": "Not publicly available",
-                    "last_verified": "",
-                    "description": "Pending manual review",
-                    "official_url": (
-                        f"https://store.steampowered.com/app/{app_id}/"
-                    ),
-                    "cover_url": image,
-                    "adult_verified": False,
-                    "listing_status": "pending_review",
-                    "f95_search_url": (
-                        "https://f95zone.to/search/?q="
-                        + quote_plus(title)
-                    )
-                })
-
-        except Exception as error:
-            errors.append(f"Steam ({term}): {error}")
-
-    return games, errors
-
-
-# IMPORTANT: Keep this function at the LEFT EDGE.
-# Do not put spaces before def.
-
-def discover_games():
+def discover_itch_games(max_pages=None):
+    pages = max_pages or MAX_PAGES_PER_FEED
     session = requests.Session()
-    session.headers.update(HEADERS)
+    session.headers.update({"User-Agent": USER_AGENT})
 
-    itch_games, itch_errors = discover_itch_games(session)
-    steam_games, steam_errors = discover_steam_games(session)
-
-    combined = itch_games + steam_games
-
-    unique = []
+    games = []
     seen = set()
+    errors = []
 
-    for game in combined:
-        key = game.get("game_id") or game.get("official_url")
+    for feed_label, feed_url in ITCH_FEEDS:
+        for page in range(1, pages + 1):
+            try:
+                response = session.get(
+                    feed_url,
+                    params={"page": page},
+                    timeout=REQUEST_TIMEOUT
+                )
+                response.raise_for_status()
 
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(game)
+                root = ET.fromstring(response.content)
+                items = root.findall(".//item")
 
-    errors = itch_errors + steam_errors
+                if not items:
+                    break
 
-    if not unique and errors:
+                for item in items:
+                    title = clean(
+                        item.findtext("plainTitle") or item.findtext("title")
+                    )
+
+                    link = (
+                        item.findtext("link")
+                        or item.findtext("guid")
+                        or ""
+                    ).strip()
+
+                    host = (urlparse(link).hostname or "").lower()
+
+                    if not title or not link:
+                        continue
+
+                    if not (
+                        host == "itch.io"
+                        or host.endswith(".itch.io")
+                    ):
+                        continue
+
+                    if link in seen:
+                        continue
+
+                    seen.add(link)
+
+                    cover = (item.findtext("imageurl") or "").strip()
+
+                    if not cover:
+                        description = item.findtext("description") or ""
+                        match = re.search(
+                            r'<img[^>]+src=["\']([^"\']+)',
+                            description,
+                            re.I
+                        )
+                        cover = match.group(1) if match else ""
+
+                    price = (item.findtext("price") or "").strip()
+
+                    if price in ("$0.00", "0.00"):
+                        price_type = "Free"
+                    elif price:
+                        price_type = "Paid / other"
+                    else:
+                        price_type = "Unknown"
+
+                    games.append({
+                        "game_id": link,
+                        "title": title,
+                        "platform": _platforms(item),
+                        "source": "itch.io",
+                        "feed": feed_label,
+                        "genre": "Unknown",
+                        "art_style": "Unknown",
+                        "price_type": price_type,
+                        "rating": None,
+                        "rating_count": None,
+                        "views": None,
+                        "downloads": None,
+                        "trend_score": None,
+                        "stats_source": "Not publicly available in this feed",
+                        "last_verified": "",
+                        "description": clean(
+                            item.findtext("description")
+                        )[:450],
+                        "official_url": link,
+                        "cover_url": cover,
+                        "adult_verified": False,
+                        "listing_status": "unverified",
+                    })
+
+                if len(items) < 30:
+                    break
+
+                time.sleep(0.15)
+
+            except Exception as exc:
+                errors.append(f"{feed_label} page {page}: {exc}")
+
+    if not games and errors:
         raise RuntimeError(
-            "Discovery sources failed: " + " | ".join(errors[:5])
+            "itch.io feeds could not be read: "
+            + " | ".join(errors[:3])
         )
 
-    return unique
+    return games, errors
+
+
+F95_SEARCH_TERMS = [
+    "visual novel",
+    "dating sim",
+    "simulation",
+    "RPG",
+    "adventure",
+    "uncensored",
+    "Android",
+    "Linux",
+    "completed",
+]
+
+
+def discover_f95_links():
+    links = []
+
+    for term in F95_SEARCH_TERMS:
+        links.append({
+            "title": f"F95Zone: {term}",
+            "source": "F95Zone",
+            "description": (
+                "Open F95Zone search results for this topic. "
+                "Listings remain hosted by F95Zone."
+            ),
+            "official_url": (
+                "https://f95zone.to/search/?q=" + quote_plus(term)
+            ),
+            "cover_url": "",
+            "platform": "F95Zone",
+            "listing_status": "external link",
+        })
+
+    links.append({
+        "title": "Browse all F95Zone game discussions",
+        "source": "F95Zone",
+        "description": "Browse current game forums and threads on F95Zone.",
+        "official_url": "https://f95zone.to/",
+        "cover_url": "",
+        "platform": "F95Zone",
+        "listing_status": "external link",
+    })
+
+    return links
+
+
+def discover_games(max_pages=None):
+    itch_games, errors = discover_itch_games(max_pages=max_pages)
+    f95_links = discover_f95_links()
+
+    return {
+        "itch_games": itch_games,
+        "f95_links": f95_links,
+        "errors": errors,
+    }

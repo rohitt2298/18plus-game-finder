@@ -48,6 +48,37 @@ if not st.session_state.age_confirmed:
 
     st.stop()
 
+if st.button("🔎 Explore New Games from itch.io"):
+    with st.spinner("Searching itch.io for new candidates..."):
+        try:
+            candidates = discover_itch_games()
+            st.session_state["itch_candidates"] = candidates
+        except Exception as error:
+            st.error(f"Discovery failed: {error}")
+
+if "itch_candidates" in st.session_state:
+    candidates = st.session_state["itch_candidates"]
+
+    st.divider()
+    st.subheader(f"New Discovery Candidates ({len(candidates)})")
+
+    st.info(
+        "These are unverified candidates, not approved listings. "
+        "Review each game manually before adding it to the catalogue."
+    )
+
+    if candidates:
+        candidate_df = pd.DataFrame(candidates)
+
+        st.dataframe(
+            candidate_df[
+                ["title", "platform", "source", "official_url", "listing_status"]
+            ],
+            use_container_width=True
+        )
+    else:
+        st.info("No matching candidates found in this feed.")
+
 CATALOGUE = Path("catalogue.csv")
 
 if not CATALOGUE.exists():

@@ -1,131 +1,134 @@
 
 
-import re
+
 import requests
 import xml.etree.ElementTree as ET
 from html import unescape
 from urllib.parse import urlparse
+import re
 
-ITCH_FEED = "https://itch.io/feed/new.xml"
+FEEDS = [
+    "https://itch.io/feed/new.xml",
+    "https://itch.io/games/newest.xml",
+    "https://itch.io/games/top-rated.xml",
+    "https://itch.io/games/top-sellers.xml",
+    "https://itch.io/games/tag-visual-novel.xml",
+    "https://itch.io/games/tag-dating-sim.xml",
+    "https://itch.io/games/tag-simulation.xml",
+    "https://itch.io/games/tag-nsfw.xml",
+]
 
+PAGES_PER_FEED = 3
 
-def clean_text(value):
-    if not value:
-        return ""
-
-    value = unescape(value)
+def clean(value):
+    value = unescape(value or "")
     value = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
-
 def discover_itch_games():
-    """Fetch recent itch.io games for manual review."""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "AFTERDARK-GameFinder/1.0"
+    })
 
-    try:
-        response = requests.get(
-            ITCH_FEED,
-            timeout=25,
-            headers={
-                "User-Agent": "AFTERDARK-GameFinder/1.0"
-            }
-        )
+    candidates = []
+    seen = set()
+    errors = []
 
-        response.raise_for_status()
+    for feed in FEEDS:
+        for page in range(1, PAGES_PER_FEED + 1):
+            try:
+                response = session.get(
+                    feed,
+                    params={"page": page},
+                    timeout=20
+                )
+                response.raise_for_status()
 
-        root = ET.fromstring(response.content)
+                root = ET.fromstring(response.content)
 
-        candidates = []
-        seen = set()
+                for item in root.findall(".//item"):
+                    title = clean(
+                        item.findtext("plainTitle")
+                        or item.findtext("title")
+                    )
 
-        for item in root.findall(".//item"):
+                    link = (
+                        item.findtext("link")
+                        or item.findtext("guid")
+                        or ""
+                    ).strip()
 
-            title = clean_text(
-                item.findtext("plainTitle")
-                or item.findtext("title")
-                or ""
-            )
+                    host = urlparse(link).hostname or ""
 
-            link = (
-                item.findtext("link")
-                or item.findtext("guid")
-                or ""
-            ).strip()
+                    if not (
+                        host == "itch.io"
+                        or host.endswith(".itch.io")
+                    ):
+                        continue
 
-            description = clean_text(
-                item.findtext("description", default="")
-            )
+                    if not title or link in seen:
+                        continue
 
-            image_url = (
-                item.findtext("imageurl") or ""
-            ).strip()
+                    seen.add(link)
 
-            price = (
-                item.findtext("price") or ""
-            ).strip()
+                    description = clean(
+                        item.findtext("description")
+                    )
 
-            hostname = urlparse(link).hostname or ""
+                    image_url = (
+                        item.findtext("imageurl") or ""
+                    ).strip()
 
-            if not (
-                hostname == "itch.io"
-                or hostname.endswith(".itch.io")
-            ):
-                continue
+                    price = (
+                        item.findtext("price") or ""
+                    ).strip()
 
-            if not title or not link or link in seen:
-                continue
+                    platforms = []
+                    platform_node = item.find("platforms")
 
-            seen.add(link)
+                    if platform_node is not None:
+                        for platform in platform_node:
+                            if (platform.text or "").strip().lower() == "yes":
+                                name = platform.tag.lower()
 
-            platform_tags = item.find("platforms")
-            detected_platforms = []
+                                if name == "html":
+                                    platforms.append("Browser")
+                                elif name == "android":
+                                    platforms.append("Android")
+                                elif name in ("windows", "linux", "osx"):
+                                    platforms.append("PC")
 
-            if platform_tags is not None:
-                for platform in platform_tags:
-                    if (platform.text or "").strip().lower() == "yes":
-                        name = platform.tag.lower()
+                    candidates.append({
+                        "game_id": link,
+                        "title": title,
+                        "platform": " / ".join(sorted(set(platforms))) or "Unknown",
+                        "source": "itch.io",
+                        "genre": "Unknown",
+                        "art_style": "Unknown",
+                        "price_type": (
+                            "Free" if price in ("$0.00", "0.00")
+                            else "Paid / Other" if price
+                            else "Unknown"
+                        ),
+                        "rating": None,
+                        "rating_count": None,
+                        "views": None,
+                        "downloads": None,
+                        "trend_score": None,
+                        "stats_source": "Not available",
+                        "last_verified": "",
+                        "description": description[:500],
+                        "official_url": link,
+                        "cover_url": image_url,
+                        "adult_verified": False,
+                        "listing_status": "pending_review"
+                    })
 
-                        if name == "html":
-                            detected_platforms.append("Browser")
-                        elif name == "android":
-                            detected_platforms.append("Android")
-                        elif name in ["windows", "linux", "osx"]:
-                            detected_platforms.append("PC")
+            except Exception as error:
+                errors.append(f"{feed}, page {page}: {error}")
 
-            platform = (
-                " / ".join(sorted(set(detected_platforms)))
-                if detected_platforms
-                else "Unknown"
-            )
+    if not candidates and errors:
+        raise RuntimeError("; ".join(errors[:3]))
 
-            candidates.append({
-                "game_id": link,
-                "title": title,
-                "platform": platform,
-                "source": "itch.io",
-                "genre": "Unknown",
-                "art_style": "Unknown",
-                "price_type": (
-                    "Free" if price == "0.00"
-                    else "Paid / Other" if price
-                    else "Unknown"
-                ),
-                "rating": None,
-                "rating_count": None,
-                "views": None,
-                "downloads": None,
-                "trend_score": None,
-                "stats_source": "Not available",
-                "last_verified": "",
-                "description": description[:500],
-                "official_url": link,
-                "cover_url": image_url,
-                "adult_verified": False,
-                "listing_status": "pending_review"
-            })
-
-        return candidates
-
-    except Exception as error:
-        raise RuntimeError(
-            f"itch.io discovery failed: {error}"
-        ) from error
+    return candidates

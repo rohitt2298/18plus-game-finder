@@ -191,7 +191,7 @@ if not st.session_state.age_ok:
             visual novels, simulations and adventures.
         </p>
         <h3 style="color:#ff4db8">18+ ONLY</h3>
-        <p>Listings are unverified until reviewed.</p>
+        <p>Only manually reviewed listings with adult characters are shown. Unverified submissions stay hidden.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -251,8 +251,7 @@ if HERO.exists():
 # DISCOVERY
 with st.expander("🔎 Discover / refresh listings"):
     st.write(
-        "Fetches public adult-tagged itch.io RSS feeds and attempts the latest F95Zone games RSS feed. "
-        "Feed coverage is partial; listings remain unverified until reviewed."
+        "Fetches candidate listings from public feeds for review. Feed tags and keyword filters cannot prove every character is an adult, so fetched candidates are never shown in the public catalogue until manually reviewed and approved in catalogue.csv."
     )
 
     pages = st.slider(
@@ -269,8 +268,9 @@ with st.expander("🔎 Discover / refresh listings"):
                 st.session_state["discovery"] = payload
 
                 st.success(
-                    f"Loaded {len(payload['itch_games'])} itch.io listings and "
-                    f"{len(payload.get('f95_games', []))} F95Zone game listings."
+                    f"Fetched {len(payload['itch_games'])} itch.io and "
+                    f"{len(payload.get('f95_games', []))} F95Zone candidates. "
+                    "They remain hidden until manually approved."
                 )
             except Exception as exc:
                 st.error(f"Discovery failed: {exc}")
@@ -354,13 +354,10 @@ art_styles = ["All"] + sorted({
 art_style = st.selectbox("Art style", art_styles)
 
 
-verification = st.selectbox(
-    "Verification",
-    ["All listings", "Verified only", "Unverified only"]
-)
+st.caption("Safety filter: only entries marked adult_verified=true AND listing_status=approved in catalogue.csv are displayed.")
 
 sort = st.selectbox(
-    "Rank games by",
+    "Rank approved games by",
     [
         "Latest",
         "Highest Rated",
@@ -399,10 +396,8 @@ for game in games:
         and safe_text(game.get("listing_status")).lower() == "approved"
     )
 
-    if verification == "Verified only" and not verified:
-        continue
-
-    if verification == "Unverified only" and verified:
+    # Fail closed: never display feed discoveries or unreviewed catalogue rows.
+    if not verified:
         continue
 
     filtered.append(game)
@@ -434,8 +429,8 @@ if sort in sort_map:
 if page == "F95Zone":
     st.subheader("🔗 F95Zone — latest feed listings")
     st.info(
-        "These titles are imported from a public RSS endpoint when available. "
-        "Coverage may be incomplete; listings are unverified and hosted by F95Zone."
+        "Only manually reviewed, approved adult-only entries are shown here. "
+        "Unreviewed F95Zone feed results are hidden."
     )
     f95_filtered = [g for g in filtered if safe_text(g.get("source")) == "F95Zone"]
     if f95_filtered:
@@ -445,14 +440,6 @@ if page == "F95Zone":
                 cover_card(game)
     else:
         st.warning("No F95Zone game listings were returned by the feed. You can still browse F95Zone directly.")
-    with st.expander("F95Zone search links"):
-        cols = st.columns(2)
-        for i, item in enumerate(f95_links):
-            with cols[i % 2]:
-                st.markdown(f"**{item['title']}**")
-                st.caption(item["description"])
-                st.link_button("Open on F95Zone ↗", item["official_url"])
-
 elif page == "New Releases":
     st.subheader("🆕 New / recently discovered games")
     st.caption(
@@ -489,7 +476,7 @@ else:
 
 st.caption(
     f"{len(filtered)} listings shown · "
-    f"{len(discovered)} itch.io discoveries loaded this session"
+    f"{len(discovered) + len(f95_games)} feed candidates fetched this session · hidden pending review"
 )
 
 
@@ -501,9 +488,9 @@ if payload.get("errors"):
 
 if not filtered:
     st.info(
-        "No listings match these filters. "
-        "Open the discovery panel and fetch listings, "
-        "or broaden your filters."
+        "No manually approved adult-only listings match these filters. "
+        "New feed discoveries stay hidden until each title and its character ages are reviewed. "
+        "A feed tag or automated keyword scan is not proof that all characters are adults."
     )
 
 else:

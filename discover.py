@@ -1,4 +1,5 @@
 
+
 import re
 import requests
 import xml.etree.ElementTree as ET
@@ -7,55 +8,107 @@ from urllib.parse import urlparse
 
 ITCH_FEED = "https://itch.io/feed/new.xml"
 
-ADULT_KEYWORDS = [
-    "18+", "adult", "nsfw", "mature",
-    "uncensored", "explicit", "adult-only"
-]
+
+def clean_text(value):
+    if not value:
+        return ""
+
+    value = unescape(value)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
 
 def discover_itch_games():
-    """Fetch recent itch.io uploads for manual review."""
+    """Fetch recent itch.io games for manual review."""
 
     try:
         response = requests.get(
             ITCH_FEED,
-            timeout=20,
-            headers={"User-Agent": "AFTERDARK-GameFinder/1.0"}
+            timeout=25,
+            headers={
+                "User-Agent": "AFTERDARK-GameFinder/1.0"
+            }
         )
+
         response.raise_for_status()
 
         root = ET.fromstring(response.content)
+
         candidates = []
+        seen = set()
 
         for item in root.findall(".//item"):
-            title = unescape(
-                item.findtext("title", default="")
+
+            title = clean_text(
+                item.findtext("plainTitle")
+                or item.findtext("title")
+                or ""
+            )
+
+            link = (
+                item.findtext("link")
+                or item.findtext("guid")
+                or ""
             ).strip()
 
-            link = item.findtext("link", default="").strip()
-
-            description = unescape(
+            description = clean_text(
                 item.findtext("description", default="")
             )
-            description = re.sub(
-                r"<[^>]+>", " ", description
+
+            image_url = (
+                item.findtext("imageurl") or ""
+            ).strip()
+
+            price = (
+                item.findtext("price") or ""
+            ).strip()
+
+            hostname = urlparse(link).hostname or ""
+
+            if not (
+                hostname == "itch.io"
+                or hostname.endswith(".itch.io")
+            ):
+                continue
+
+            if not title or not link or link in seen:
+                continue
+
+            seen.add(link)
+
+            platform_tags = item.find("platforms")
+            detected_platforms = []
+
+            if platform_tags is not None:
+                for platform in platform_tags:
+                    if (platform.text or "").strip().lower() == "yes":
+                        name = platform.tag.lower()
+
+                        if name == "html":
+                            detected_platforms.append("Browser")
+                        elif name == "android":
+                            detected_platforms.append("Android")
+                        elif name in ["windows", "linux", "osx"]:
+                            detected_platforms.append("PC")
+
+            platform = (
+                " / ".join(sorted(set(detected_platforms)))
+                if detected_platforms
+                else "Unknown"
             )
-
-            searchable = (title + " " + description).lower()
-
-            if not any(word in searchable for word in ADULT_KEYWORDS):
-                continue
-
-            if urlparse(link).hostname != "itch.io":
-                continue
 
             candidates.append({
                 "game_id": link,
                 "title": title,
-                "platform": "PC / Browser",
+                "platform": platform,
                 "source": "itch.io",
                 "genre": "Unknown",
                 "art_style": "Unknown",
-                "price_type": "Unknown",
+                "price_type": (
+                    "Free" if price == "0.00"
+                    else "Paid / Other" if price
+                    else "Unknown"
+                ),
                 "rating": None,
                 "rating_count": None,
                 "views": None,
@@ -63,9 +116,9 @@ def discover_itch_games():
                 "trend_score": None,
                 "stats_source": "Not available",
                 "last_verified": "",
-                "description": "Pending manual review",
+                "description": description[:500],
                 "official_url": link,
-                "cover_url": "",
+                "cover_url": image_url,
                 "adult_verified": False,
                 "listing_status": "pending_review"
             })

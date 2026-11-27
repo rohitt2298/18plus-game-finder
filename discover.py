@@ -1,29 +1,34 @@
 
 
-
-
-                    
+import re
 import requests
 import xml.etree.ElementTree as ET
 from html import unescape
 from urllib.parse import urlparse
-import re
 
-# Browse pages converted to RSS feeds
-FEEDS = [
+ITCH_FEEDS = [
+    "https://itch.io/feed/new.xml",
     "https://itch.io/games/newest.xml",
     "https://itch.io/games/top-rated.xml",
-    "https://itch.io/games/featured.xml",
-    "https://itch.io/games/on-sale.xml",
-    "https://itch.io/games/free.xml",
     "https://itch.io/games/tag-visual-novel.xml",
     "https://itch.io/games/tag-dating-sim.xml",
     "https://itch.io/games/tag-simulation.xml",
     "https://itch.io/games/tag-nsfw.xml",
 ]
 
+STEAM_SEARCHES = [
+    "adult visual novel",
+    "dating simulator",
+    "mature visual novel",
+    "romance visual novel",
+    "NSFW game",
+    "adult simulation",
+    "eroge",
+    "uncensored visual novel",
+]
+
 PAGES_PER_FEED = 5
-TIMEOUT = 15
+TIMEOUT = 20
 
 
 def clean(value):
@@ -32,81 +37,56 @@ def clean(value):
     return re.sub(r"\s+", " ", value).strip()
 
 
-def get_platforms(item):
+def get_text(item, *names):
+    for name in names:
+        node = item.find(name)
+        if node is not None and node.text:
+            return clean(node.text)
+    return ""
+
+
+def get_itch_platform(item):
     platforms = []
     node = item.find("platforms")
 
-    if node is None:
-        return "Unknown"
+    if node is not None:
+        for platform in node:
+            if (platform.text or "").strip().lower() == "yes":
+                name = platform.tag.lower()
 
-    for platform in node:
-        if (platform.text or "").strip().lower() != "yes":
-            continue
-
-        name = platform.tag.lower()
-
-        if name == "html":
-            platforms.append("Browser")
-        elif name == "android":
-            platforms.append("Android")
-        elif name in ("windows", "linux", "osx"):
-            platforms.append("PC")
+                if name == "html":
+                    platforms.append("Browser")
+                elif name == "android":
+                    platforms.append("Android")
+                elif name in ("windows", "linux", "osx"):
+                    platforms.append("PC")
 
     return " / ".join(sorted(set(platforms))) or "Unknown"
 
 
-def discover_itch_games():
-    session = requests.Session()
-
-    session.headers.update({
-        "User-Agent": "AFTERDARK-GameFinder/1.0"
-    })
-
-    candidates = []
+def discover_itch_games(session):
+    results = []
     seen = set()
     errors = []
-    feed_stats = []
 
-    for feed_url in FEEDS:
-        previous_page_links = set()
-        feed_count = 0
-
+    for feed in ITCH_FEEDS:
         for page in range(1, PAGES_PER_FEED + 1):
-
             try:
-                params = {}
-
-                if page > 1:
-                    params["page"] = page
-
                 response = session.get(
-                    feed_url,
-                    params=params,
+                    feed,
+                    params={"page": page},
                     timeout=TIMEOUT
                 )
-
                 response.raise_for_status()
 
                 root = ET.fromstring(response.content)
-                items = root.findall(".//item")
 
-                if not items:
-                    break
-
-                current_page_links = set()
-
-                for item in items:
-
-                    title = clean(
-                        item.findtext("plainTitle")
-                        or item.findtext("title")
+                for item in root.findall(".//item"):
+                    title = get_text(
+                        item, "plainTitle", "title"
                     )
 
-                    link = (
-                        item.findtext("link")
-                        or item.findtext("guid")
-                        or ""
-                    ).strip()
+                    link = get_text(item, "link", "guid")
 
                     host = urlparse(link).hostname or ""
 
@@ -116,72 +96,31 @@ def discover_itch_games():
                     ):
                         continue
 
-                    if not title or not link:
-                        continue
-
-                    current_page_links.add(link)
-
-                # Stop if the feed repeats the previous page
-                if (
-                    current_page_links
-                    and current_page_links == previous_page_links
-                ):
-                    break
-
-                previous_page_links = current_page_links
-
-                for item in items:
-
-                    title = clean(
-                        item.findtext("plainTitle")
-                        or item.findtext("title")
-                    )
-
-                    link = (
-                        item.findtext("link")
-                        or item.findtext("guid")
-                        or ""
-                    ).strip()
-
-                    host = urlparse(link).hostname or ""
-
-                    if not (
-                        host == "itch.io"
-                        or host.endswith(".itch.io")
-                    ):
-                        continue
-
-                    if not title or not link or link in seen:
+                    if not title or link in seen:
                         continue
 
                     seen.add(link)
 
-                    description = clean(
-                        item.findtext("description")
+                    image = get_text(
+                        item, "imageurl", "imageUrl"
                     )
 
-                    image_url = (
-                        item.findtext("imageurl") or ""
-                    ).strip()
+                    description = get_text(
+                        item, "description"
+                    )
 
-                    price = (
-                        item.findtext("price") or ""
-                    ).strip()
+                    price = get_text(item, "price")
 
-                    platforms = get_platforms(item)
-
-                    candidates.append({
+                    results.append({
                         "game_id": link,
                         "title": title,
-                        "platform": platforms,
+                        "platform": get_itch_platform(item),
                         "source": "itch.io",
                         "genre": "Unknown",
                         "art_style": "Unknown",
                         "price_type": (
-                            "Free"
-                            if price in ("$0.00", "0.00")
-                            else "Paid / Other"
-                            if price
+                            "Free" if price in ("$0.00", "0.00")
+                            else "Paid / Other" if price
                             else "Unknown"
                         ),
                         "rating": None,
@@ -193,35 +132,113 @@ def discover_itch_games():
                         "last_verified": "",
                         "description": description[:500],
                         "official_url": link,
-                        "cover_url": image_url,
+                        "cover_url": image,
                         "adult_verified": False,
                         "listing_status": "pending_review"
                     })
 
-                    feed_count += 1
-
-                if len(items) < 30:
-                    break
-
             except Exception as error:
-                errors.append(
-                    f"{feed_url} page {page}: {error}"
-                )
-                break
+                errors.append(f"itch.io page error: {error}")
 
-        feed_stats.append({
-            "feed": feed_url,
-            "unique_games": feed_count
-        })
-
-    # Save diagnostic information for Streamlit
-    discover_itch_games.last_stats = {
-        "total_unique_games": len(candidates),
-        "feeds": feed_stats,
-        "errors": errors
-    }
-
-    return candidates
+    return results, errors
 
 
-discover_itch_games.last_stats = {}
+def discover_steam_games(session):
+    results = []
+    seen = set()
+    errors = []
+
+    for query in STEAM_SEARCHES:
+        try:
+            response = session.get(
+                "https://store.steampowered.com/api/storesearch/",
+                params={
+                    "term": query,
+                    "l": "english",
+                    "cc": "us"
+                },
+                timeout=TIMEOUT
+            )
+            response.raise_for_status()
+
+            data = response.json()
+
+            for item in data.get("items", []):
+                app_id = item.get("id")
+
+                if not app_id or app_id in seen:
+                    continue
+
+                seen.add(app_id)
+
+                title = clean(item.get("name", ""))
+                cover = item.get("tiny_image", "")
+
+                results.append({
+                    "game_id": f"steam-{app_id}",
+                    "title": title,
+                    "platform": "PC",
+                    "source": "Steam",
+                    "genre": "Unknown",
+                    "art_style": "Unknown",
+                    "price_type": "Unknown",
+                    "rating": None,
+                    "rating_count": None,
+                    "views": None,
+                    "downloads": None,
+                    "trend_score": None,
+                    "stats_source": "Not available",
+                    "last_verified": "",
+                    "description": (
+                        "Steam search result. Check the official "
+                        "store page and age/content details."
+                    ),
+                    "official_url": (
+                        f"https://store.steampowered.com/app/{app_id}/"
+                    ),
+                    "cover_url": cover,
+                    "adult_verified": False,
+                    "listing_status": "pending_review"
+                })
+
+        except Exception as error:
+            errors.append(f"Steam search '{query}' failed: {error}")
+
+    return results, errors
+
+
+def discover_games():
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "AFTERDARK-GameDiscovery/1.0"
+    })
+
+    itch_results, itch_errors = discover_itch_games(session)
+    steam_results, steam_errors = discover_steam_games(session)
+
+    combined = itch_results + steam_results
+
+    # Remove duplicate URLs
+    unique = []
+    seen = set()
+
+    for game in combined:
+        key = game.get("game_id") or game.get("official_url")
+
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(game)
+
+    if not unique and itch_errors and steam_errors:
+        raise RuntimeError(
+            "Both discovery sources failed. "
+            + " | ".join((itch_errors + steam_errors)[:4])
+        )
+
+    return unique
+
+
+
+                    
+
+                            

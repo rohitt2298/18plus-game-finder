@@ -112,7 +112,7 @@ RISK_TERMS = __import__("re").compile(
     __import__("re").I
 )
 ADULT_TERMS = __import__("re").compile(
-    r"\\b(hentai|nsfw|adult|18\\+|erotic|explicit|sexual|uncensored|xxx|"
+    r"\\b(hentai|adult|18\\+|erotic|explicit|sexual|uncensored|xxx|"
     r"sex game|adult game|mature content)\\b",
     __import__("re").I
 )
@@ -121,7 +121,7 @@ ADULT_TERMS = __import__("re").compile(
 def is_displayable_candidate(game):
     text = " ".join(
         safe_text(game.get(k), "")
-        for k in ("title", "genre", "description", "feed")
+        for k in ("title", "genre", "description")
     ).lower()
     if RISK_TERMS.search(text):
         return False
